@@ -1081,6 +1081,144 @@ document.addEventListener('keydown', (e)=>{
   if(e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') handleEyeButton('brown');
 });
 
+// ===== Web Audio API =====
+const _ac = new (window.AudioContext || window.webkitAudioContext)();
+let _bgmNode = null, _bgmGain = null;
+
+function _note(freq, start, dur, vol=0.18, type='sine') {
+  const o = _ac.createOscillator();
+  const g = _ac.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(freq, _ac.currentTime + start);
+  g.gain.setValueAtTime(0, _ac.currentTime + start);
+  g.gain.linearRampToValueAtTime(vol, _ac.currentTime + start + 0.02);
+  g.gain.linearRampToValueAtTime(0, _ac.currentTime + start + dur);
+  o.connect(g); g.connect(_ac.destination);
+  o.start(_ac.currentTime + start);
+  o.stop(_ac.currentTime + start + dur + 0.05);
+}
+
+function startBGM() {
+  stopBGM();
+  _bgmGain = _ac.createGain();
+  _bgmGain.gain.setValueAtTime(0.08, _ac.currentTime);
+  _bgmGain.connect(_ac.destination);
+
+  const melody = [
+    [523,0],[587,0.4],[659,0.8],[698,1.2],[784,1.6],
+    [698,2.0],[659,2.4],[587,2.8],[523,3.2],
+    [523,3.6],[659,4.0],[784,4.4],[1047,4.8],
+    [784,5.2],[659,5.6],[587,6.0],[523,6.4]
+  ];
+  function playLoop(offset) {
+    _bgmNode = _ac.createOscillator();
+    const g = _ac.createGain();
+    _bgmNode.type = 'triangle';
+    _bgmNode.connect(g); g.connect(_bgmGain);
+    _bgmNode.frequency.setValueAtTime(440, _ac.currentTime);
+    g.gain.setValueAtTime(0, _ac.currentTime);
+    melody.forEach(([f, t]) => {
+      _bgmNode.frequency.setValueAtTime(f, _ac.currentTime + offset + t);
+      g.gain.setValueAtTime(0.1, _ac.currentTime + offset + t);
+      g.gain.setValueAtTime(0.06, _ac.currentTime + offset + t + 0.35);
+    });
+    const loopDur = 7.0;
+    _bgmNode.start(_ac.currentTime + offset);
+    _bgmNode.stop(_ac.currentTime + offset + loopDur);
+    _bgmNode.onended = () => { if(_bgmGain) playLoop(0); };
+  }
+  playLoop(0);
+}
+
+function stopBGM() {
+  if(_bgmNode) { try { _bgmNode.onended=null; _bgmNode.stop(); } catch(e){} _bgmNode=null; }
+  if(_bgmGain) { _bgmGain.disconnect(); _bgmGain=null; }
+}
+
+function sfxCorrect() {
+  _note(784,0,0.1,0.25,'square'); _note(1047,0.1,0.12,0.25,'square');
+}
+function sfxWrong() {
+  _note(200,0,0.15,0.3,'sawtooth'); _note(150,0.15,0.15,0.25,'sawtooth');
+}
+function sfxCombo() {
+  [523,659,784,1047].forEach((f,i) => _note(f,i*0.07,0.1,0.2,'square'));
+}
+function sfxGameOver() {
+  [400,350,300,250,200].forEach((f,i) => _note(f,i*0.12,0.15,0.3,'sawtooth'));
+}
+function sfxVictory() {
+  [523,659,784,659,784,1047].forEach((f,i) => _note(f,i*0.1,0.15,0.22,'square'));
+}
+function sfxClick() {
+  _note(880,0,0.05,0.15,'sine');
+}
+
+function _resumeAC() { if(_ac.state==='suspended') _ac.resume(); }
+
+// ===== Fullscreen =====
+function toggleFullscreen() {
+  const el = document.documentElement;
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen || (()=>{})).call(el);
+  } else {
+    (document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen || (()=>{})).call(document);
+  }
+}
+
+function enterFullscreenAuto() {
+  const el = document.documentElement;
+  if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+    (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || (()=>{})).call(el).catch(()=>{});
+  }
+}
+
+// ===== Patch startGame / resetGame / showResult =====
+const _origStart = startGame;
+startGame = function() {
+  _resumeAC();
+  enterFullscreenAuto();
+  startBGM();
+  _origStart();
+};
+
+const _origReset = resetGame;
+resetGame = function() {
+  stopBGM();
+  _origReset();
+};
+
+const _origResult = showResult;
+showResult = function() {
+  stopBGM();
+  const isWin = (gameState.totalCorrect >= 7);
+  setTimeout(()=> isWin ? sfxVictory() : sfxGameOver(), 100);
+  _origResult();
+};
+
+// ===== Patch handleEyeButton for sfx =====
+const _origHandleEye = handleEyeButton;
+handleEyeButton = function(eyeType) {
+  const before = gameState.totalCorrect;
+  _origHandleEye(eyeType);
+  if(gameState.totalCorrect > before) {
+    if(gameState.combo >= 3) sfxCombo(); else sfxCorrect();
+  } else {
+    sfxWrong();
+  }
+};
+
+// Fullscreen button (floating)
+(function() {
+  const btn = document.createElement('button');
+  btn.id = 'fsBtn';
+  btn.textContent = '⛶';
+  btn.style.cssText = 'position:fixed;top:8px;right:8px;z-index:9999;background:rgba(0,0,0,0.3);color:#fff;border:none;border-radius:8px;width:36px;height:36px;font-size:20px;cursor:pointer;touch-action:manipulation;';
+  btn.addEventListener('click', ()=>{ _resumeAC(); sfxClick(); toggleFullscreen(); });
+  btn.addEventListener('touchstart', e=>{ e.preventDefault(); _resumeAC(); sfxClick(); toggleFullscreen(); }, {passive:false});
+  document.body.appendChild(btn);
+})();
+
 // Init
 setupButtons();
 updateHUD();
