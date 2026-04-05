@@ -483,11 +483,9 @@ let animFrame = null;
 let lastTime = 0;
 let stageClearPending = false;
 
-// Input: swipe control for goat
-let activeGoat = null; // the goat being controlled
-let touchStartX = 0;
-let pointerX = 0;
-let pointerDown = false;
+// Input: raft control
+let raftTouchDir = 0; // -1=left, 0=none, +1=right
+const keys = {};
 
 // ===================== CANVAS SIZE =====================
 function resizeCanvas() {
@@ -710,11 +708,11 @@ function showSplash(x, y) {
 // ===================== GAME LOGIC =====================
 function updateRaft(dt) {
   const cfg = stageConfig[gameState.stage - 1];
-  raft.x += raft.direction * cfg.raftSpeed;
-
-  // Bounce
-  if (raft.x <= 0) { raft.x = 0; raft.direction = 1; }
-  if (raft.x + raft.w >= canvas.width) { raft.x = canvas.width - raft.w; raft.direction = -1; }
+  const spd = cfg.raftSpeed * 2 + 2;
+  if (keys['ArrowLeft'] || raftTouchDir < 0) raft.x -= spd;
+  if (keys['ArrowRight'] || raftTouchDir > 0) raft.x += spd;
+  if (raft.x < 0) raft.x = 0;
+  if (raft.x + raft.w > canvas.width) raft.x = canvas.width - raft.w;
 }
 
 function updateGoats(dt) {
@@ -735,30 +733,15 @@ function updateGoats(dt) {
       continue;
     }
 
-    // Controlled by touch
-    if (g.controlled && pointerDown) {
-      g.x += (pointerX - g.x) * 0.25;
-    }
-
-    // Gravity
+    // Gravity + natural drift
     g.y += g.vy;
-    if (!g.controlled) g.x += g.vx;
-
-    // Auto-control: when goat is falling, make first uncontrolled goat controllable
-    if (!g.controlled && !activeGoat) {
-      if (g.y > canvas.height * 0.2) {
-        g.controlled = true;
-        activeGoat = g;
-      }
-    }
+    g.x += g.vx;
 
     // Check landing on raft
     if (g.y + g.h/2 >= raft.y && g.y - g.h/2 < raft.y + raft.h) {
       if (g.x >= raft.x - 10 && g.x <= raft.x + raft.w + 10) {
         g.landed = true;
         g._timer = 0;
-        if (g === activeGoat) { activeGoat = null; pointerDown = false; }
-
         if (g.isEnemy) {
           // Bomb landed
           gameState.combo = 0;
@@ -794,8 +777,6 @@ function updateGoats(dt) {
       g.splashed = true;
       g._timer = 0;
       showSplash(g.x, canvas.height - 40);
-      if (g === activeGoat) { activeGoat = null; pointerDown = false; }
-
       if (!g.isEnemy) {
         gameState.combo = 0;
         loseLife();
@@ -808,7 +789,6 @@ function updateGoats(dt) {
     if (g.x < -60 || g.x > canvas.width + 60) {
       if (!g.landed && !g.splashed) {
         g.splashed = true; g._timer = 0;
-        if (g === activeGoat) { activeGoat = null; pointerDown = false; }
         if (!g.isEnemy) {
           gameState.combo = 0;
           loseLife();
@@ -865,10 +845,9 @@ function gameLoop(ts) {
 function startStage(stage) {
   gameState.stage = stage;
   goats = [];
-  activeGoat = null;
   goatSpawnTimer = 0;
   timeLeft = 20;
-  pointerDown = false;
+  raftTouchDir = 0;
   updateHUD();
 
   if (stageTimer) clearInterval(stageTimer);
@@ -916,8 +895,7 @@ function startGame() {
   gameState.maxCombo = 0;
   gameState.running = true;
   goats = [];
-  activeGoat = null;
-  pointerDown = false;
+  raftTouchDir = 0;
 
   resizeCanvas();
   showScreen('gameScreen');
@@ -963,58 +941,28 @@ function showResultScreen(won) {
 }
 
 // ===================== INPUT HANDLING =====================
-function handlePointerMove(clientX) {
-  pointerX = clientX;
-  if (activeGoat && pointerDown) {
-    // goat follows pointer smoothly (in game loop)
-  }
-}
+// Keyboard
+document.addEventListener('keydown', e => { keys[e.key] = true; });
+document.addEventListener('keyup', e => { keys[e.key] = false; });
 
-function handlePointerDown(clientX) {
-  pointerDown = true;
-  pointerX = clientX;
-
-  // Find closest falling goat to take control of
-  if (!activeGoat) {
-    let closest = null, minDist = 999;
-    for (const g of goats) {
-      if (!g.landed && !g.splashed && !g.controlled) {
-        const dist = Math.abs(g.x - clientX);
-        if (dist < minDist) { minDist = dist; closest = g; }
-      }
-    }
-    if (closest && minDist < 120) {
-      // Release previous
-      for (const g of goats) g.controlled = false;
-      closest.controlled = true;
-      activeGoat = closest;
-    }
-  }
-}
-
-function handlePointerUp() {
-  pointerDown = false;
-}
-
-// Mouse
-canvas.addEventListener('mousedown', e => { handlePointerDown(e.clientX); });
-canvas.addEventListener('mousemove', e => { handlePointerMove(e.clientX); });
-canvas.addEventListener('mouseup', handlePointerUp);
-
-// Touch
+// Touch: left half = move left, right half = move right
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  if (e.touches.length > 0) handlePointerDown(e.touches[0].clientX);
+  if (e.touches.length > 0) {
+    raftTouchDir = e.touches[0].clientX < canvas.width / 2 ? -1 : 1;
+  }
 }, { passive: false });
 
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
-  if (e.touches.length > 0) handlePointerMove(e.touches[0].clientX);
+  if (e.touches.length > 0) {
+    raftTouchDir = e.touches[0].clientX < canvas.width / 2 ? -1 : 1;
+  }
 }, { passive: false });
 
 canvas.addEventListener('touchend', e => {
   e.preventDefault();
-  handlePointerUp();
+  raftTouchDir = 0;
 }, { passive: false });
 
 // Global scroll block
